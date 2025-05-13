@@ -1,4 +1,4 @@
-#sui-contracts
+# SUI NFT & Token Launchpad Smart Contract
 
 These are most important functions:
 - Token fund raising
@@ -7,3 +7,6 @@ These are most important functions:
 - Permissionless donation
 - Swap
 - DAO
+
+## Contact
+https://t.me/soljesty
