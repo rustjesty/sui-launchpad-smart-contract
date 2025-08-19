@@ -1,21 +1,41 @@
 [package]
 name = "SeaPad"
 version = "1.0.0"
+edition = "2024.beta"
+authors = ["SeaPad Team <team@seapad.fund>"]
+description = "Advanced staking and liquidity management system for SUI blockchain"
+license = "MIT"
+published-at = "0x0000000000000000000000000000000000000000000000000000000000000000"
 
 [dependencies]
 Sui = { git = "https://github.com/MystenLabs/sui", subdir = "crates/sui-framework/packages/sui-framework", rev = "mainnet" }
+W3libs = { git = "https://github.com/seapad-fund/w3libs", rev = "1.0.1" }
 
 [addresses]
-seapad =  "0x00"
-sui =  "0x02"
+seapad = "0x00"
+sui = "0x02"
 
-
-# staking admin
+# Production addresses (replace with actual addresses after deployment)
 treasury_admin = "0x98a890e3a370a3e4005460bfcd31dd4adf0f36af6d760bfd2c7014ac6ee2b17e"
 stake_emergency_admin = "0x98a890e3a370a3e4005460bfcd31dd4adf0f36af6d760bfd2c7014ac6ee2b17e"
 
-# staking test addresses.
+# Test addresses for development and testing
 treasury = "0x13"
 emergency = "0x14"
 alice = "0x15"
 bob = "0x16"
+charlie = "0x17"
+diana = "0x18"
+
+[dev-dependencies]
+# Add any development dependencies here if needed
+
+[profile.default]
+# Default compilation profile
+opt-level = 2
+debug = false
+
+[profile.test]
+# Test compilation profile
+opt-level = 0
+debug = true

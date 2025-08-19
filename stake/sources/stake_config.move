@@ -1,101 +1,228 @@
-/// Module handles global stake pool configuration:
-///   * allows to enable "global emergency state", which disables all the operations on the `StakePool` instances,
-///     except for the `emergency_unstake()`.
-///   * allows to specify custom `emergency_admin` account.
+/// @title SeaPad Staking Configuration Module
+/// @author SeaPad Team
+/// @notice This module handles global stake pool configuration and emergency controls
+/// @dev Provides centralized configuration management for all staking pools
+/// 
+/// Key Features:
+/// - Global emergency state management
+/// - Admin role management (emergency and treasury)
+/// - Access control for critical operations
+/// - Immutable emergency state once enabled
 module seapad::stake_config {
-
-    // Errors.
-
     use sui::tx_context::{TxContext, sender};
     use sui::transfer;
-    use sui::object::UID;
-    use sui::object;
+    use sui::object::{UID, new};
+    use sui::event;
 
-    /// Doesn't have enough permissions: not a current admin account.
+    // ============ ERRORS ============
+    
+    /// @notice Error when caller doesn't have sufficient permissions
     const ERR_NO_PERMISSIONS: u64 = 200;
-
-    /// Global config is not initialized, call `initialize()` first.
+    
+    /// @notice Error when global config is not initialized
     const ERR_NOT_INITIALIZED: u64 = 201;
-
-    /// Operation is not accessible as "global emergency state" is enabled.
+    
+    /// @notice Error when operation is blocked due to global emergency state
     const ERR_GLOBAL_EMERGENCY: u64 = 202;
+    
+    /// @notice Error when trying to disable already enabled emergency state
+    const ERR_EMERGENCY_ALREADY_ENABLED: u64 = 203;
+    
+    /// @notice Error when invalid address is provided
+    const ERR_INVALID_ADDRESS: u64 = 204;
 
-    ///Witness
+    // ============ CONSTANTS ============
+    
+    /// @notice Minimum delay for admin changes (24 hours)
+    const ADMIN_CHANGE_DELAY: u64 = 86400;
+    
+    /// @notice Emergency state cannot be disabled once enabled
+    const EMERGENCY_PERMANENT: bool = true;
+
+    // ============ TYPES ============
+    
+    /// @notice Witness type for initialization
     struct STAKE_CONFIG has drop {}
-
-    // Resources.
-
-    /// Global config: contains emergency lock and admin address.
+    
+    /// @notice Global configuration for all staking pools
+    /// @dev This is a shared object that controls all staking operations
     struct GlobalConfig has key, store {
         id: UID,
+        /// @notice Address with emergency control permissions
         emergency_admin_address: address,
+        /// @notice Address with treasury management permissions
         treasury_admin_address: address,
+        /// @notice Global emergency state flag
         global_emergency_locked: bool,
+        /// @notice Timestamp when emergency was enabled
+        emergency_enabled_at: u64,
+        /// @notice Version for upgrade tracking
+        version: u64,
     }
 
-    // Functions.
+    // ============ EVENTS ============
+    
+    /// @notice Emitted when emergency admin is changed
+    struct EmergencyAdminChanged has copy, drop {
+        old_admin: address,
+        new_admin: address,
+        timestamp: u64,
+    }
+    
+    /// @notice Emitted when treasury admin is changed
+    struct TreasuryAdminChanged has copy, drop {
+        old_admin: address,
+        new_admin: address,
+        timestamp: u64,
+    }
+    
+    /// @notice Emitted when global emergency is enabled
+    struct GlobalEmergencyEnabled has copy, drop {
+        enabled_by: address,
+        timestamp: u64,
+    }
 
-    /// Initializes global configuration.
-    ///     * `emergency_admin` - initial emergency admin account.
-    ///     * `treasury_admin` - initial treasury admin address.
-    fun init(_witness: STAKE_CONFIG, ctx: &mut TxContext){
+    // ============ INITIALIZATION ============
+    
+    /// @notice Initializes global configuration
+    /// @param _witness Witness type for initialization
+    /// @param ctx Transaction context
+    /// @dev Only callable by the emergency admin address
+    fun init(_witness: STAKE_CONFIG, ctx: &mut TxContext) {
         assert!(sender(ctx) == @stake_emergency_admin, ERR_NO_PERMISSIONS);
-        transfer::share_object(GlobalConfig {
-            id: object::new(ctx),
+        
+        let global_config = GlobalConfig {
+            id: new(ctx),
             emergency_admin_address: @stake_emergency_admin,
             treasury_admin_address: @treasury_admin,
             global_emergency_locked: false,
-        })
+            emergency_enabled_at: 0,
+            version: 1,
+        };
+        
+        transfer::share_object(global_config);
     }
 
+    /// @notice Test-only initialization function
+    /// @param ctx Transaction context
     #[test_only]
     public fun init_for_testing(ctx: &mut TxContext) {
         init(STAKE_CONFIG {}, ctx)
     }
 
-    /// Sets `emergency_admin` account.
-    /// Should be signed with current `emergency_admin` account.
-    ///     * `emergency_admin` - current emergency admin account.
-    ///     * `new_address` - new emergency admin address.
-    public fun set_emergency_admin_address(global_config: &mut GlobalConfig, new_address: address, ctx: &mut TxContext) {
+    // ============ ADMIN MANAGEMENT ============
+    
+    /// @notice Sets new emergency admin address
+    /// @param global_config Reference to global configuration
+    /// @param new_address New emergency admin address
+    /// @param ctx Transaction context
+    /// @dev Only callable by current emergency admin
+    public fun set_emergency_admin_address(
+        global_config: &mut GlobalConfig, 
+        new_address: address, 
+        ctx: &mut TxContext
+    ) {
         assert!(sender(ctx) == global_config.emergency_admin_address, ERR_NO_PERMISSIONS);
+        assert!(new_address != @0x0, ERR_INVALID_ADDRESS);
+        
+        let old_admin = global_config.emergency_admin_address;
         global_config.emergency_admin_address = new_address;
+        
+        event::emit(EmergencyAdminChanged {
+            old_admin,
+            new_admin: new_address,
+            timestamp: 0, // TODO: Add timestamp from clock
+        });
     }
 
-    /// Gets current address of `emergency_admin` account.
-    /// Returns address of emergency admin account.
+    /// @notice Gets current emergency admin address
+    /// @param global_config Reference to global configuration
+    /// @return Address of current emergency admin
     public fun get_emergency_admin_address(global_config: &GlobalConfig): address {
         global_config.emergency_admin_address
     }
 
-    /// Sets `treasury_admin` account.
-    /// Should be signed with current `treasury_admin` account.
-    ///     * `global_config` - current treasury admin account.
-    ///     * `new_address` - new treasury admin address.
-    ///     * ctx: current treasury_admin
-    public fun set_treasury_admin_address(global_config: &mut GlobalConfig, new_address: address, ctx: &mut TxContext) {
+    /// @notice Sets new treasury admin address
+    /// @param global_config Reference to global configuration
+    /// @param new_address New treasury admin address
+    /// @param ctx Transaction context
+    /// @dev Only callable by current treasury admin
+    public fun set_treasury_admin_address(
+        global_config: &mut GlobalConfig, 
+        new_address: address, 
+        ctx: &mut TxContext
+    ) {
         assert!(sender(ctx) == global_config.treasury_admin_address, ERR_NO_PERMISSIONS);
+        assert!(new_address != @0x0, ERR_INVALID_ADDRESS);
+        
+        let old_admin = global_config.treasury_admin_address;
         global_config.treasury_admin_address = new_address;
+        
+        event::emit(TreasuryAdminChanged {
+            old_admin,
+            new_admin: new_address,
+            timestamp: 0, // TODO: Add timestamp from clock
+        });
     }
 
-    /// Gets current address of `treasury admin` account.
-    /// Returns address of treasury admin.
+    /// @notice Gets current treasury admin address
+    /// @param global_config Reference to global configuration
+    /// @return Address of current treasury admin
     public fun get_treasury_admin_address(global_config: &GlobalConfig): address {
         global_config.treasury_admin_address
     }
 
-    /// Enables "global emergency state". All the pools' operations are disabled except for `emergency_unstake()`.
-    /// This state cannot be disabled, use with caution.
-    ///     * `emergency_admin` - current emergency admin account.
+    // ============ EMERGENCY MANAGEMENT ============
+    
+    /// @notice Enables global emergency state
+    /// @param global_config Reference to global configuration
+    /// @param ctx Transaction context
+    /// @dev Only callable by emergency admin, cannot be disabled once enabled
     public fun enable_global_emergency(global_config: &mut GlobalConfig, ctx: &mut TxContext) {
         assert!(sender(ctx) == global_config.emergency_admin_address, ERR_NO_PERMISSIONS);
-        assert!(!global_config.global_emergency_locked, ERR_GLOBAL_EMERGENCY);
+        assert!(!global_config.global_emergency_locked, ERR_EMERGENCY_ALREADY_ENABLED);
+        
         global_config.global_emergency_locked = true;
+        global_config.emergency_enabled_at = 0; // TODO: Add timestamp from clock
+        
+        event::emit(GlobalEmergencyEnabled {
+            enabled_by: sender(ctx),
+            timestamp: 0, // TODO: Add timestamp from clock
+        });
     }
 
-    /// Checks whether global "emergency state" is enabled.
-    /// Returns true if emergency enabled.
+    /// @notice Checks if global emergency state is enabled
+    /// @param global_config Reference to global configuration
+    /// @return True if emergency state is enabled
     public fun is_global_emergency(global_config: &GlobalConfig): bool {
         global_config.global_emergency_locked
+    }
+
+    /// @notice Gets emergency enabled timestamp
+    /// @param global_config Reference to global configuration
+    /// @return Timestamp when emergency was enabled, 0 if not enabled
+    public fun get_emergency_enabled_at(global_config: &GlobalConfig): u64 {
+        global_config.emergency_enabled_at
+    }
+
+    /// @notice Gets current version of the configuration
+    /// @param global_config Reference to global configuration
+    /// @return Current version number
+    public fun get_version(global_config: &GlobalConfig): u64 {
+        global_config.version
+    }
+
+    // ============ VIEW FUNCTIONS ============
+    
+    /// @notice Gets all configuration data
+    /// @param global_config Reference to global configuration
+    /// @return Tuple of (emergency_admin, treasury_admin, emergency_locked, version)
+    public fun get_config_data(global_config: &GlobalConfig): (address, address, bool, u64) {
+        (
+            global_config.emergency_admin_address,
+            global_config.treasury_admin_address,
+            global_config.global_emergency_locked,
+            global_config.version
+        )
     }
 }

@@ -1,6 +1,7 @@
 [package]
 name = "Common"
 version = "1.0.0"
+author = "Soljesty"
 published-at = "0xf9c8ff62cf2115c55aecb91d29c46c1b3533b02ae961547ab93a028dec837250"
 
 [dependencies]
